@@ -1,5 +1,4 @@
 # From .NET Core 3.0 you can use the command: `dotnet new gitignore` to generate a customizable .gitignore file
-*.json
 *.swp
 *.*~
 project.lock.json
@@ -38,3 +37,5 @@ watchlogs-log.db
 appsettings.Development.json
 appsettings.json
 *.log
+
+node_modules/

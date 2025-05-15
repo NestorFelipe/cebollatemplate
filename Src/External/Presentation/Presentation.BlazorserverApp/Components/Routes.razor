@@ -1,0 +1,32 @@
+﻿@using Microsoft.AspNetCore.Components.Authorization
+@using Presentation.BlazorserverApp.Components.Layout
+
+<CascadingAuthenticationState>
+    <Router AppAssembly="typeof(Program).Assembly">
+        <Found Context="routeData">
+            <AuthorizeRouteView RouteData="routeData" DefaultLayout="typeof(MainLayout)" >
+                <NotAuthorized>
+                    @{
+                        // Con Microsoft.Identity.Web y la FallbackPolicy configurada en Program.cs,
+                        // la redirección a la página de inicio de sesión de Azure AD
+                        // debería ser manejada automáticamente por el middleware de autenticación.
+                        // Este contenido es un respaldo o se muestra brevemente.
+                    }
+                    <p>No estás autorizado para ver este contenido.</p>
+                    <p>Serás redirigido a la página de inicio de sesión...</p>
+                </NotAuthorized>
+                <Authorizing>
+                    <p>Verificando autorización y cargando la página...</p>
+                    @* Aquí podrías poner un indicador de carga más visual si lo deseas *@
+                </Authorizing>
+            </AuthorizeRouteView>
+            <FocusOnNavigate RouteData="routeData" Selector="h1" />
+        </Found>
+        <NotFound>
+            <PageTitle>Página no encontrada</PageTitle>
+            <LayoutView Layout="typeof(MainLayout)">
+                <p role="alert">Lo sentimos, no hay nada en esta dirección (Error 404).</p>
+            </LayoutView>
+        </NotFound>
+    </Router>
+</CascadingAuthenticationState>

@@ -1,0 +1,251 @@
+﻿@page "/counter"
+@using Application.Contracts.Contracts.Appsgp
+@using Application.Dto.Models.Appsgp
+@using Domain.Entities.Appsgp
+@using Microsoft.AspNetCore.Components.Authorization
+@using System.Security.Claims
+@using Microsoft.Graph
+@using Microsoft.Identity.Client
+@using Microsoft.Identity.Web
+@inject GraphServiceClient GraphClient
+@inject ITokenAcquisition TokenAcquisitionService
+@inject IAppsgpGenericCrud _appsgpGenericCrud;
+
+<PageTitle>Counter</PageTitle>
+<h1>Counter</h1>
+
+<p role="status">Current count: @currentCount</p>
+<input class="input validator" type="email" required placeholder="mail@site.com" />
+<div class="validator-hint">Enter valid email address</div>
+<button class="btn btn-primary" @onclick="IncrementCount">Click me</button>
+
+<button class="btn btn-primary" @onclick="RegistroTest">Registrar</button>
+
+@code {
+
+    [CascadingParameter]
+    private Task<AuthenticationState> AuthenticationStateTask { get; set; }
+
+    private User userProfile; // Objeto del SDK de Graph para el perfil
+    private Presence presence; // Objeto del SDK de Graph para la presenci
+
+    private ClaimsPrincipal user;
+    private string profilePictureUrl = null;
+    private string errorMessage = null;
+    private string consentUrl = null; // Para consentimiento incremental
+
+    private string accessTokenForGraph;
+    private string accessTokenForOtherApi;
+
+    private int currentCount = 0;
+
+    private void IncrementCount()
+    {
+        currentCount++;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        if (AuthenticationStateTask == null)
+        {
+            // Manejar el caso donde el Task es null, aunque no debería pasar si
+            // AddCascadingAuthenticationState está bien configurado.
+            return;
+        }
+
+        await GetTokensAsync();
+
+        await LoadGraphData();
+
+
+
+       /* // Espera a que el estado de autenticación esté disponible
+        var authState = await AuthenticationStateTask;
+        user = authState.User; // Obtiene el ClaimsPrincipal
+
+        // Ahora puedes acceder a los claims específicos si lo necesitas
+        if (user.Identity.IsAuthenticated)
+        {
+            // Ejemplo: Obtener claims específicos. Los nombres exactos ('preferred_username', 'oid')
+            // dependen de cómo esté configurado Azure AD para emitir tokens.
+            // Inspecciona user.Claims en el depurador para ver los tipos disponibles.
+            preferredUsername = user.FindFirstValue("preferred_username"); // Común en Azure AD
+            objectId = user.FindFirstValue(ClaimTypes.NameIdentifier) ?? user.FindFirstValue("oid"); // 'oid' es común para Object ID en Azure AD v2.0
+
+            // Puedes agregar más lógica aquí si es necesario
+        }*/
+
+
+    }
+
+    public async Task GetTokensAsync()
+    {
+        try
+        {
+            // Obtener token para Microsoft Graph
+            // Los scopes deben coincidir o ser un subconjunto de los configurados en Program.cs
+            // y consentidos en Azure AD.
+            // string[] graphScopes = new string[] { "user.read", "presence.read" }; // O desde configuración
+            // accessTokenForGraph = await TokenAcquisitionService.GetAccessTokenForUserAsync(graphScopes);
+
+            // Si tienes otra API configurada:
+            string[] otherApiScopes = new string[] { "api://a45ffbb3-534d-4c33-9d8f-6b1f14452ebb/Tasks.Read" };
+            accessTokenForOtherApi = await TokenAcquisitionService.GetAccessTokenForUserAsync(otherApiScopes);
+
+            // Ahora puedes usar accessTokenForGraph o accessTokenForOtherApi
+            // en la cabecera 'Authorization' de tus HttpClient requests.
+
+            // Ejemplo de uso con HttpClient:
+            if (!string.IsNullOrEmpty(accessTokenForGraph))
+            {
+                using (var httpClient = new HttpClient())
+                {
+                    httpClient.DefaultRequestHeaders.Authorization =
+                        new System.Net.Http.Headers.AuthenticationHeaderValue("Bearer", accessTokenForGraph);
+
+                    var response = await httpClient.GetAsync("https://graph.microsoft.com/v1.0/me");
+                    if (response.IsSuccessStatusCode)
+                    {
+                        var content = await response.Content.ReadAsStringAsync();
+                        // Procesar contenido
+                    }
+                    else
+                    {
+                        // Manejar error
+                    }
+                }
+            }
+        }
+        catch (Microsoft.Identity.Client.MsalUiRequiredException ex)
+        {
+            // Se requiere consentimiento o interacción adicional del usuario.
+            // Microsoft.Identity.Web.TokenAcquisition MsalUiRequiredException
+            // Deberás manejar el consentimiento incremental o redirigir.
+            // En Blazor Server, esto puede ser complejo de manejar directamente aquí
+            // y usualmente se maneja a través de MicrosoftIdentityConsentHandler
+            // o configurando bien los scopes iniciales.
+            Console.WriteLine($"Error de consentimiento: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // Otro error durante la adquisición del token
+            Console.WriteLine($"Error al obtener token: {ex.Message}");
+        }
+    }
+
+    private async Task LoadGraphData()
+    {
+        errorMessage = null;
+        consentUrl = null;
+        profilePictureUrl = null; // Resetear en cada carga
+
+        try
+        {
+            // 1. Obtener perfil básico del usuario actual (/me)
+            // Los scopes necesarios (ej. "user.read") ya fueron manejados por Microsoft.Identity.Web
+            userProfile = await GraphClient.Me
+                                    .Request()
+                                    .Select(u => new
+                                    { // Selecciona solo los campos que necesitas
+                                        u.DisplayName,
+                                        u.JobTitle,
+                                        u.Mail,
+                                        u.UserPrincipalName,
+                                        u.Id // Necesario para otras llamadas como la foto
+                                    })
+                                    .GetAsync();
+
+            // 2. Intentar obtener la foto de perfil
+            try
+            {
+                // Solicita la foto más grande disponible
+                var photoStream = await GraphClient.Me.Photos["648x648"].Content // O usa .Photo.Content para la predeterminada
+                                    .Request()
+                                    .GetAsync();
+
+                if (photoStream != null)
+                {
+                    using (var ms = new MemoryStream())
+                    {
+                        await photoStream.CopyToAsync(ms);
+                        var buffer = ms.ToArray();
+                        profilePictureUrl = $"data:image/jpeg;base64,{Convert.ToBase64String(buffer)}";
+                    }
+                }
+            }
+            catch (ServiceException ex) when (ex.StatusCode == System.Net.HttpStatusCode.NotFound)
+            {
+                // Es normal no tener foto, no es un error crítico
+                profilePictureUrl = null; // Asegurarse que está null
+            }
+            catch (Exception photoEx)
+            {
+                // Loggear el error de foto, pero no detener el resto
+                Console.WriteLine($"Error al obtener foto de perfil: {photoEx.Message}");
+                profilePictureUrl = null;
+            }
+
+
+            // 3. Obtener presencia (requiere scope "Presence.Read")
+            try
+            {
+                presence = await GraphClient.Me.Presence
+                                       .Request()
+                                       .GetAsync();
+            }
+            catch (ServiceException ex) when (ex.IsMatch("accessDenied"))
+            {
+                // Probablemente falte el scope o consentimiento para Presence.Read
+                Console.WriteLine($"Acceso denegado para obtener presencia: {ex.Message}");
+                presence = null; // No mostrar error crítico por esto
+            }
+            catch (Exception presenceEx)
+            {
+                Console.WriteLine($"Error al obtener presencia: {presenceEx.Message}");
+                presence = null;
+            }
+
+
+        }
+        // Manejo de errores específicos de Microsoft.Identity.Web
+        catch (MsalUiRequiredException ex) // Requiere consentimiento o interacción
+        {
+            errorMessage = $"Se requiere consentimiento o interacción: {ex.Message}";
+            // Intenta construir una URL para solicitar consentimiento (puede no funcionar en Blazor Server sin configuración adicional)
+            // consentUrl = ...; // Lógica más compleja para iniciar flujo de consentimiento
+            Console.WriteLine($"MsalUiRequiredException: {ex}");
+        }
+        catch (ServiceException graphEx) // Error específico de Microsoft Graph (ej. permisos insuficientes)
+        {
+            errorMessage = $"Error de Graph API: {graphEx.Message}";
+            Console.WriteLine($"ServiceException: {graphEx}");
+            // Aquí podrías verificar graphEx.IsMatch("accessDenied") etc.
+        }
+        catch (Exception ex) // Otros errores
+        {
+            errorMessage = $"Error inesperado: {ex.Message}";
+            Console.WriteLine($"Error general: {ex}");
+        }
+
+        StateHasChanged(); // Notifica a Blazor que actualice la UI
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            Console.WriteLine("Counter component rendered for the first time.");
+        }
+    }
+
+    private async Task RegistroTest()
+    {
+        var result = await _appsgpGenericCrud.SaveEntity<CncPrograma, CncProgramaDto>(new CncProgramaDto
+            {
+                Descripcion = "Test desde blazor",
+                Programa = "Test descripcion desde blazor",
+                
+            });
+        Console.WriteLine(result);
+    }
+}

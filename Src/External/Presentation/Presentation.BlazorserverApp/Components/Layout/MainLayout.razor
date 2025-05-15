@@ -1,0 +1,52 @@
+﻿@inherits LayoutComponentBase
+@implements IAsyncDisposable
+
+
+<header class="px-2">
+    <NavBar />
+</header>
+<main class="px-2 pt-2 md:px-20 lg:px-12">
+    @Body
+</main>
+
+
+
+<div id="blazor-error-ui" data-nosnippet>
+    An unhandled error has occurred.
+    <a href="." class="reload">Reload</a>
+    <span class="dismiss">🗙</span>
+</div>
+
+
+@code {
+
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        if (firstRender)
+        {
+            try
+            {
+                await jsBuild.Create()
+                                .WithModule("main")
+                                .InvokeVoidAsync("initializeTheme");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Error general al inicializar el tema: {ex.Message}");
+            }
+        }
+    }
+
+
+
+    // Implementa IAsyncDisposable para limpiar la referencia al módulo
+    async ValueTask IAsyncDisposable.DisposeAsync()
+    {
+        await jsBuild.DisposeAsync();
+        GC.SuppressFinalize(this);
+    }
+
+
+
+}
